@@ -2,12 +2,14 @@
 ##########################################
 ## Paper: Cheating across gender
 ## Author code: Denise Laroze
+## Additional code: Thomas Robinson
 ## Year: 2018
 ##########################################
 
 
 library(foreign)
 library(ggplot2)
+library(ggpubr)
 library(readstata13)
 library(RColorBrewer)
 library(rms)
@@ -15,25 +17,33 @@ theme_set(theme_bw())
 library(plyr)
 library(effsize)
 library(gridExtra)
+library(FindIt)
+library(BART)
 library(clusterSEs)
 library(car)
 library(Rmisc)
 library(texreg)
 library(xtable)
 
+# rm(list=ls())
+# setwd("C:/Users/Denise Laroze Prehn/Dropbox/CESS-Santiago/Archive/Gender/Data Analysis")
+
 rm(list=ls())
-setwd("C:/Users/Denise Laroze Prehn/Dropbox/CESS-Santiago/Archive/Gender/Data Analysis")
+setwd("/Users/tomrobinson/OneDrive/CESS/Gender/Gender_cheating/")
+
 
 #fig.path <- "Figures"
 #fig.path<- "~/GitHub/Gender_cheating/Figures"
 #bd<-"~/GitHub/Gender_cheating/"
 
 fig.path<- "Figures"
-bd<-"C:/Users/Denise Laroze Prehn/Dropbox/CESS-Santiago/Archive/Gender/Data Analysis/"
 
-v<-"05Jun2018"
+# bd<-"C:/Users/Denise Laroze Prehn/Dropbox/CESS-Santiago/Archive/Gender/Data Analysis/"
+bd<-"/Users/tomrobinson/OneDrive/CESS/Gender/Gender_cheating/"
 
-  #dat<-read.csv("Masterfile_2016_Dec.csv", sep=";")
+v<-"20Jul2018"
+
+#dat<-read.csv("Masterfile_2016_Dec.csv", sep=";")
 cdat <- read.dta13("Data/mastern_final2018.dta") # Country comparison
 modes<-read.csv("Data/Modes_data.csv")
 
@@ -342,7 +352,7 @@ texreg(file= paste0(bd, "Tables/balance_test.tex", sep=""),
 
 
 ########################
-### Regression análisis
+### Regression analysis
 ########################
 
 
@@ -390,6 +400,180 @@ lm4.cl <- robcov(lm4, df$subj_id)
 glm4<-lrm(cheat~ gender_lab  + ncorrectret + auditrate + taxrate +country + modes+ offerdg + safechoices, df, x=T, y=T)
 glm4.cl <- robcov(glm4, df$subj_id)
 
+#######################
+### FindIt analysis
+#######################
+
+# Duplicate df
+df_het <- df
+
+df_het$gender_lab <- as.factor(df_het$gender_lab)
+df_het$modes <- as.factor(df_het$modes)
+df_het$perform_high <- as.factor(df_het$perform_high)
+
+# THIS WORKS!
+# F1 <- FindIt(model.treat = percevaded ~ auditrate,
+#              model.main = ~ gender_lab + country + offerdg + mean.ncorrectret,
+#              model.int = ~ gender_lab + country,
+#              data = df_het,
+#              type = "continuous",
+#              treat.type = "single")
+
+# Audit rate = 0
+# A0 <- FindIt(model.treat = percevaded ~ taxrate,
+#              model.main = ~ gender_lab + country + modes + offerdg + mean.ncorrectret,
+#              model.int = ~ gender_lab + country + modes,
+#              data = df_het[df_het$auditrate == 0,],
+#              type = "continuous",
+#              treat.type = "single")
+
+A0 <- FindIt(model.treat = percevaded ~ taxrate,
+             model.main = ~ gender_lab + country + modes + offerdg + mean.ncorrectret,
+             model.int = ~ gender_lab + country + modes,
+             data = df_het[df_het$auditrate == 0,],
+             type = "continuous",
+             treat.type = "single",
+             search.lambdas = FALSE,
+             lambdas = c(-8.858,-8.853))
+
+A0_pred <- predict(A0)
+
+## Stacked density plot
+
+# Duplicate dataframe and order treatment effects
+hist_a0 <- A0_pred$data
+hist_a0 <- hist_a0[order(hist_a0$Treatment.effect),]
+hist_a0$i <- c(1:nrow(hist_a0))
+
+# Convert covariates to binary factors
+hist_a0$gender_lab <- as.factor(hist_a0$gender_lab)
+hist_a0$modes <- as.factor(hist_a0$modes)
+hist_a0$country <- as.factor(hist_a0$country)
+
+# Recreate Kosuke heterogeneity plot
+effectsPlot <- ggplot(hist_a0, aes(x = i, y = Treatment.effect)) +
+  geom_line() +
+  geom_hline(yintercept= 0, linetype="dashed", color="red") +
+  geom_hline(yintercept = A0_pred$ATE, color = "blue") +
+  labs(y = "Treatment Effect") +
+  theme_minimal()
+
+## Create hist_a0ogram plots
+genderPlot <- ggplot(hist_a0, aes(x=i, fill=gender_lab)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Gender") +
+  labs(y = "Count")
+
+modePlot <- ggplot(hist_a0, aes(x=i, fill=modes)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Mode") +
+  labs(y = "Count")
+
+countryPlot <- ggplot(hist_a0, aes(x=i, fill=country)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Country") +
+  labs(y = "Count")
+
+## Combine all plots into one chart
+figure <- ggarrange(effectsPlot, genderPlot, countryPlot, modePlot,
+                    ncol = 1, nrow = 4, heights = c(2,1.3,1.3,1.3))
+plot(figure)
+
+ggsave(figure, filename = "findit_audit_0.png", device = "png", height = 8, width = 6)
+
+## Gender effects heterogeneity
+
+a0_gender_hetplot <- ggplot(hist_a0, aes(x = i, y = Treatment.effect)) +
+  geom_point(aes(color=gender_lab)) +
+  geom_hline(yintercept= 0, linetype="dashed", color="red") +
+  geom_hline(yintercept = A0_pred$ATE, color = "blue") +
+  labs(y = "Treatment Effect", color = "Gender") +
+  theme_minimal()
+
+plot(a0_gender_hetplot)
+
+ggsave(a0_gender_hetplot, filename = "findit_gender_0.png",device = "png",height = 6, width = 6)
+
+# Audit rate = 10
+# A10 <- FindIt(model.treat = percevaded ~ taxrate,
+#               model.main = ~ gender_lab + country + modes + offerdg + mean.ncorrectret,
+#               model.int = ~ gender_lab + country + modes,
+#               data = df_het[df_het$auditrate == 10,],
+#               type = "continuous",
+#               treat.type = "single")
+
+A10 <- FindIt(model.treat = percevaded ~ taxrate,
+              model.main = ~ gender_lab + country + modes + offerdg + mean.ncorrectret,
+              model.int = ~ gender_lab + country + modes,
+              data = df_het[df_het$auditrate == 10,],
+              type = "continuous",
+              treat.type = "single",
+              search.lambdas = FALSE,
+              lambdas = c(-6.8795,-6.8745))
+
+A10_pred <- predict(A10)
+
+## Stacked density plot
+
+# Duplicate dataframe and order treatment effects
+hist_a10 <- A10_pred$data
+hist_a10 <- hist_a10[order(hist_a10$Treatment.effect),]
+hist_a10$i <- c(1:nrow(hist_a10))
+
+# Convert covariates to binary factors
+hist_a10$gender_lab <- as.factor(hist_a10$gender_lab)
+hist_a10$modes <- as.factor(hist_a10$modes)
+hist_a10$country <- as.factor(hist_a10$country)
+
+# Recreate Kosuke heterogeneity plot
+effectsPlot <- ggplot(hist_a10, aes(x = i, y = Treatment.effect)) +
+  geom_line() +
+  geom_hline(yintercept= 0, linetype="dashed", color="red") +
+  geom_hline(yintercept = A10_pred$ATE, color = "blue") +
+  labs(y = "Treatment Effect") +
+  theme_minimal()
+
+## Create histogram plots
+genderPlot <- ggplot(hist_a10, aes(x=i, fill=gender_lab)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Gender") +
+  labs(y = "Count")
+
+modePlot <- ggplot(hist_a10, aes(x=i, fill=modes)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Mode") +
+  labs(y = "Count")
+
+countryPlot <- ggplot(hist_a10, aes(x=i, fill=country)) +
+  geom_histogram(binwidth = 250, position="stack") +
+  theme(legend.position="bottom") +
+  scale_fill_discrete(name="Country") +
+  labs(y = "Count")
+
+## Combine all plots into one chart
+figure <- ggarrange(effectsPlot, genderPlot, countryPlot, modePlot,
+                    ncol = 1, nrow = 4, heights = c(2,1.3,1.3,1.3))
+plot(figure)
+
+ggsave(figure, filename = "findit_audit_10.png", device = "png", height = 8, width = 6)
+
+## Gender effects heterogeneity
+
+a10_gender_hetplot <- ggplot(hist_a10, aes(x = i, y = Treatment.effect)) +
+  geom_point(aes(color=gender_lab)) +
+  geom_hline(yintercept= 0, linetype="dashed", color="red") +
+  geom_hline(yintercept = A0_pred$ATE, color = "blue") +
+  labs(y = "Treatment Effect", color = "Gender") +
+  theme_minimal()
+
+plot(a10_gender_hetplot)
+
+ggsave(a10_gender_hetplot, filename = "findit_gender_10.png",device = "png",height = 6, width = 6)
 
 #######################
 ### Tables main models
