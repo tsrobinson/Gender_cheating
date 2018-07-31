@@ -18,7 +18,9 @@ library(plyr)
 library(effsize)
 library(gridExtra)
 library(FindIt)
-library(BART)
+library(BayesTree)
+library(randomForest)
+library(glmnet)
 library(clusterSEs)
 library(car)
 library(Rmisc)
@@ -47,6 +49,9 @@ v<-"20Jul2018"
 cdat <- read.dta13("Data/mastern_final2018.dta") # Country comparison
 modes<-read.csv("Data/Modes_data.csv")
 
+# Source het. effect plot function
+source("het_plot_function.r")
+
 #################################
 ### Data Management country data 
 #################################
@@ -71,10 +76,10 @@ cdat$treatment[cdat$country=="Russia" & cdat$shock==1] <- 3 # shock - Russia
 cdat$treatment[cdat$country=="Russia" & cdat$session==108] <- 4 # Redistribution - Russia
 cdat$treatment[cdat$country=="Russia" & cdat$non_fixed==1]<-5
 cdat$treatment_lab <- factor(cdat$treatment, labels = c("Baseline",
-                                                      "Status",
-                                                      "Shock",
-                                                      "Redistribution",
-                                                      "Non-fixed"))
+                                                        "Status",
+                                                        "Shock",
+                                                        "Redistribution",
+                                                        "Non-fixed"))
 
 table(cdat$country, cdat$treatment_lab)
 
@@ -100,12 +105,12 @@ cdat$treatment2[cdat$country=="Russia" & cdat$non_fixed==1]<-7 # Non-Fixed Russi
 
 
 cdat$treatment2_lab <- factor(cdat$treatment2, labels = c("Baseline",
-                                                        "Status (Low)",
-                                                        "Status (High)",
-                                                        "Shock (No)",
-                                                        "Shock (Yes)",
-                                                        "Redistribution",
-                                                        "Non-fixed"))
+                                                          "Status (Low)",
+                                                          "Status (High)",
+                                                          "Shock (No)",
+                                                          "Shock (Yes)",
+                                                          "Redistribution",
+                                                          "Non-fixed"))
 
 #####  High tax groups
 cdat$HighTax  <- as.numeric(apply(cdat[,c("T20","T30", "T40")],1,sum)>0)
@@ -144,9 +149,9 @@ modes$safechoices<-(1-modes$risk.pref.normal)*10
 modes$percevaded<-(1-modes$report.rate)
 modes$offerdg<-modes$DictGive
 modes$country<-ifelse(modes$sample=="Mturk", "USA",
-                    ifelse( modes$sample== "CESS Online Stgo", "Chile", "UK") )
+                      ifelse( modes$sample== "CESS Online Stgo", "Chile", "UK") )
 
-                      
+
 modes$treatment_lab<-as.character(modes$sample)
 modes$treatment_lab[modes$sample=="Lab"]<-"Baseline"
 
@@ -204,13 +209,13 @@ m.usa<-median(df$ncorrectret[df$country=="USA"], na.rm = T)
 
 
 df <- ddply(df, c("subj_id"), mutate,
-                mean.ncorrectret = mean(ncorrectret, na.rm=T),
-                perform_high = if (country=="Chile" && mean.ncorrectret>m.cl) "High Performance" 
-                else if (country=="UK" && mean.ncorrectret>m.uk) "High Performance"
-                else if (country=="Russia" && mean.ncorrectret>m.ru) "High Performance" 
-                else if (country=="USA" && mean.ncorrectret>m.usa) "High Performance"
-                else "Low Performance"
-                )
+            mean.ncorrectret = mean(ncorrectret, na.rm=T),
+            perform_high = if (country=="Chile" && mean.ncorrectret>m.cl) "High Performance" 
+            else if (country=="UK" && mean.ncorrectret>m.uk) "High Performance"
+            else if (country=="Russia" && mean.ncorrectret>m.ru) "High Performance" 
+            else if (country=="USA" && mean.ncorrectret>m.usa) "High Performance"
+            else "Low Performance"
+)
 
 cdat<- ddply(cdat, c("subj_id"), mutate,
              mean.ncorrectret = mean(ncorrectret, na.rm=T),
@@ -239,12 +244,12 @@ df.ru<-df.0[df.0$country=="Russia", ]
 #######################
 #### Levels of ability
 ability<-ddply(df, c("gender_lab"), summarize,
-      mean.gender=mean(ncorrectret, na.rm = T),
-      sem=sd(ncorrectret, na.rm = T)/sqrt(length(ncorrectret)),
-      #95% confidence intervals of the mean
-      lo_ci=mean.gender-1.96*sem,
-      up_ci=mean.gender+1.96*sem
-        )
+               mean.gender=mean(ncorrectret, na.rm = T),
+               sem=sd(ncorrectret, na.rm = T)/sqrt(length(ncorrectret)),
+               #95% confidence intervals of the mean
+               lo_ci=mean.gender-1.96*sem,
+               up_ci=mean.gender+1.96*sem
+)
 
 names(ability) <- c('Gender','Mean','s.e', "Lower c.i.", "Upper c.i." )
 xt<-xtable(ability, digits = 2)
@@ -253,13 +258,13 @@ print(xt, type="latex", file=(paste0(bd, "Tables/meanXgender.tex")), floating=FA
 
 #### Gender percentages
 sum.table<-ddply(df, c("country", "modes","treatment_lab"), summarize,
-               #auditrate=as.character(list(unique(auditrate))),
-               #taxtrate=as.character(list(unique(taxrate))),
-               #die=as.character(list(unique(die))),
-               n = length(unique(subj_id)),
-               pc.female = round((length(unique(subj_id[gender_lab=="Female"]))/n)*100, 2),
-               pc.male = round((length(unique(subj_id[gender_lab=="Male"]))/n)*100, 2)
-              )
+                 #auditrate=as.character(list(unique(auditrate))),
+                 #taxtrate=as.character(list(unique(taxrate))),
+                 #die=as.character(list(unique(die))),
+                 n = length(unique(subj_id)),
+                 pc.female = round((length(unique(subj_id[gender_lab=="Female"]))/n)*100, 2),
+                 pc.male = round((length(unique(subj_id[gender_lab=="Male"]))/n)*100, 2)
+)
 sum.table
 
 place<-nrow(sum.table)+1
@@ -405,19 +410,12 @@ glm4.cl <- robcov(glm4, df$subj_id)
 #######################
 
 # Duplicate df
+set.seed(89)
 df_het <- df
 
 df_het$gender_lab <- as.factor(df_het$gender_lab)
 df_het$modes <- as.factor(df_het$modes)
 df_het$perform_high <- as.factor(df_het$perform_high)
-
-# THIS WORKS!
-# F1 <- FindIt(model.treat = percevaded ~ auditrate,
-#              model.main = ~ gender_lab + country + offerdg + mean.ncorrectret,
-#              model.int = ~ gender_lab + country,
-#              data = df_het,
-#              type = "continuous",
-#              treat.type = "single")
 
 # Audit rate = 0
 # A0 <- FindIt(model.treat = percevaded ~ taxrate,
@@ -438,51 +436,10 @@ A0 <- FindIt(model.treat = percevaded ~ taxrate,
 
 A0_pred <- predict(A0)
 
+
 ## Stacked density plot
-
-# Duplicate dataframe and order treatment effects
-hist_a0 <- A0_pred$data
-hist_a0 <- hist_a0[order(hist_a0$Treatment.effect),]
-hist_a0$i <- c(1:nrow(hist_a0))
-
-# Convert covariates to binary factors
-hist_a0$gender_lab <- as.factor(hist_a0$gender_lab)
-hist_a0$modes <- as.factor(hist_a0$modes)
-hist_a0$country <- as.factor(hist_a0$country)
-
-# Recreate Kosuke heterogeneity plot
-effectsPlot <- ggplot(hist_a0, aes(x = i, y = Treatment.effect)) +
-  geom_line() +
-  geom_hline(yintercept= 0, linetype="dashed", color="red") +
-  geom_hline(yintercept = A0_pred$ATE, color = "blue") +
-  labs(y = "Treatment Effect") +
-  theme_minimal()
-
-## Create hist_a0ogram plots
-genderPlot <- ggplot(hist_a0, aes(x=i, fill=gender_lab)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Gender") +
-  labs(y = "Count")
-
-modePlot <- ggplot(hist_a0, aes(x=i, fill=modes)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Mode") +
-  labs(y = "Count")
-
-countryPlot <- ggplot(hist_a0, aes(x=i, fill=country)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Country") +
-  labs(y = "Count")
-
-## Combine all plots into one chart
-figure <- ggarrange(effectsPlot, genderPlot, countryPlot, modePlot,
-                    ncol = 1, nrow = 4, heights = c(2,1.3,1.3,1.3))
-plot(figure)
-
-ggsave(figure, filename = "findit_audit_0.png", device = "png", height = 8, width = 6)
+figure <- het_plot(A0_pred$data,"Treatment.effect","FindIt: 0% audit rate")
+ggsave(figure, filename = "Figures/findit_audit_0.png", device = "png", height = 8, width = 6)
 
 ## Gender effects heterogeneity
 
@@ -493,9 +450,7 @@ a0_gender_hetplot <- ggplot(hist_a0, aes(x = i, y = Treatment.effect)) +
   labs(y = "Treatment Effect", color = "Gender") +
   theme_minimal()
 
-plot(a0_gender_hetplot)
-
-ggsave(a0_gender_hetplot, filename = "findit_gender_0.png",device = "png",height = 6, width = 6)
+ggsave(a0_gender_hetplot, filename = "Figures/findit_gender_0.png",device = "png",height = 6, width = 6)
 
 # Audit rate = 10
 # A10 <- FindIt(model.treat = percevaded ~ taxrate,
@@ -519,48 +474,8 @@ A10_pred <- predict(A10)
 ## Stacked density plot
 
 # Duplicate dataframe and order treatment effects
-hist_a10 <- A10_pred$data
-hist_a10 <- hist_a10[order(hist_a10$Treatment.effect),]
-hist_a10$i <- c(1:nrow(hist_a10))
-
-# Convert covariates to binary factors
-hist_a10$gender_lab <- as.factor(hist_a10$gender_lab)
-hist_a10$modes <- as.factor(hist_a10$modes)
-hist_a10$country <- as.factor(hist_a10$country)
-
-# Recreate Kosuke heterogeneity plot
-effectsPlot <- ggplot(hist_a10, aes(x = i, y = Treatment.effect)) +
-  geom_line() +
-  geom_hline(yintercept= 0, linetype="dashed", color="red") +
-  geom_hline(yintercept = A10_pred$ATE, color = "blue") +
-  labs(y = "Treatment Effect") +
-  theme_minimal()
-
-## Create histogram plots
-genderPlot <- ggplot(hist_a10, aes(x=i, fill=gender_lab)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Gender") +
-  labs(y = "Count")
-
-modePlot <- ggplot(hist_a10, aes(x=i, fill=modes)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Mode") +
-  labs(y = "Count")
-
-countryPlot <- ggplot(hist_a10, aes(x=i, fill=country)) +
-  geom_histogram(binwidth = 250, position="stack") +
-  theme(legend.position="bottom") +
-  scale_fill_discrete(name="Country") +
-  labs(y = "Count")
-
-## Combine all plots into one chart
-figure <- ggarrange(effectsPlot, genderPlot, countryPlot, modePlot,
-                    ncol = 1, nrow = 4, heights = c(2,1.3,1.3,1.3))
-plot(figure)
-
-ggsave(figure, filename = "findit_audit_10.png", device = "png", height = 8, width = 6)
+figure <- het_plot(A10_pred$data, "Treatment.effect", "FindIt: 10% audit rate")
+ggsave(figure, filename = "Figures/findit_audit_10.png", device = "png", height = 8, width = 6)
 
 ## Gender effects heterogeneity
 
@@ -573,7 +488,207 @@ a10_gender_hetplot <- ggplot(hist_a10, aes(x = i, y = Treatment.effect)) +
 
 plot(a10_gender_hetplot)
 
-ggsave(a10_gender_hetplot, filename = "findit_gender_10.png",device = "png",height = 6, width = 6)
+ggsave(a10_gender_hetplot, filename = "Figures/findit_gender_10.png",device = "png",height = 6, width = 6)
+
+#######################
+### BART heterogeneity analysis
+#######################
+
+set.seed(89)
+
+# Refresh data
+vars <- c("percevaded", "taxrate", "gender_lab", "country", "modes", "offerdg", "mean.ncorrectret")
+df_het <- df[df$auditrate == 0,vars]
+
+# Define variables incl. outcome as column 1
+
+df_het <- df_het[complete.cases(df_het[,vars]),]
+
+y <- df_het$percevaded
+train <- df_het[,-1]
+
+# Gen. test data: since treat is continuous, develop full schedule of treatment possibilities
+test <- train
+test$taxrate <- 10
+
+temp <- train
+temp$taxrate <- 20
+test <- rbind(test,temp)
+
+temp <- train
+temp$taxrate <- 30
+test <- rbind(test,temp)
+
+temp <- train
+temp$taxrate <- 40
+test <- rbind(test,temp)
+
+rm(temp)
+
+# Run BART for predicted values of observed and synthetic observations
+bart.out <- bart(x.train = train, y.train = y, x.test = test)
+
+# Recover CATE estimates
+n <- length(bart.out$yhat.train.mean)
+CATE_estimates <- train # get covar information
+CATE_estimates$y10 <- bart.out$yhat.test.mean[1:n]
+CATE_estimates$y20 <- bart.out$yhat.test.mean[(n+1):(2*n)]
+CATE_estimates$y30 <- bart.out$yhat.test.mean[(2*n+1):(3*n)]
+CATE_estimates$y40 <- bart.out$yhat.test.mean[(3*n+1):(4*n)]
+
+CATE_estimates$t1 <- CATE_estimates$y20 - CATE_estimates$y10
+CATE_estimates$t2 <- CATE_estimates$y30 - CATE_estimates$y10
+CATE_estimates$t3 <- CATE_estimates$y40 - CATE_estimates$y10
+
+## BART plot - t1
+figure <- het_plot(CATE_estimates,"t1","CATE = Yi,t=20 - Yi,t=10")
+ggsave(figure, filename = "Figures/BART_plot_t1.png", device = "png", height = 8, width = 6)
+
+## BART plot - t2
+figure <- het_plot(CATE_estimates,"t2","CATE = Yi,t=30 - Yi,t=10")
+ggsave(figure, filename = "Figures/BART_plot_t2.png", device = "png", height = 8, width = 6)
+
+## BART plot - t3
+figure <- het_plot(CATE_estimates,"t3","CATE = Yi,t=40 - Yi,t=10")
+ggsave(figure, filename = "Figures/BART_plot_t3.png", device = "png", height = 8, width = 6)
+
+
+#######################
+### Random Forest
+#######################
+
+set.seed(89)
+
+vars <- c("percevaded", "taxrate", "gender_lab", "country", "modes", "offerdg", "mean.ncorrectret")
+df_het <- df[df$auditrate == 0,vars]
+df_het$gender_lab <- as.factor(df_het$gender_lab)
+df_het$modes <- as.factor(df_het$modes)
+
+# Define variables incl. outcome as column 1
+df_het <- df_het[complete.cases(df_het[,vars]),]
+
+test <- df_het[,-1]
+test$taxrate <- 10
+
+temp <- df_het[,-1]
+temp$taxrate <- 20
+test <- rbind(test,temp)
+
+temp <- df_het[,-1]
+temp$taxrate <- 30
+test <- rbind(test,temp)
+
+temp <- df_het[,-1]
+temp$taxrate <- 40
+test <- rbind(test,temp)
+
+rm(temp)
+
+a0_rf <- randomForest(percevaded ~ ., data=df_het)
+
+a0_rf_pred <- predict(a0_rf, newdata = test)
+
+n <- length(test[,1])/4
+
+CATE_estimates <- df_het[,-1] # get covar information
+CATE_estimates$y10 <- a0_rf_pred[1:n]
+CATE_estimates$y20 <- a0_rf_pred[(n+1):(2*n)]
+CATE_estimates$y30 <- a0_rf_pred[(2*n+1):(3*n)]
+CATE_estimates$y40 <- a0_rf_pred[(3*n+1):(4*n)]
+
+CATE_estimates$t1 <- CATE_estimates$y20 - CATE_estimates$y10
+CATE_estimates$t2 <- CATE_estimates$y30 - CATE_estimates$y10
+CATE_estimates$t3 <- CATE_estimates$y40 - CATE_estimates$y10
+
+## Random Forest plot - t1
+## BART plot - t1
+figure <- het_plot(CATE_estimates,"t1","CATE = Yi,t=20 - Yi,t=10")
+ggsave(figure, filename = "Figures/RF_plot_t1.png", device = "png", height = 8, width = 6)
+
+#######################
+### LASSO
+#######################
+
+set.seed(89)
+
+vars <- c("percevaded", "taxrate", "gender_lab", "country", "modes", "offerdg", "mean.ncorrectret")
+df_het <- df[df$auditrate == 0,vars]
+
+# Define variables incl. outcome as column 1
+df_het <- df_het[complete.cases(df_het[,vars]),]
+
+# Convert to dummies for glmnet
+df_het$gender_lab <- ifelse(df_het$gender_lab == "Female",1,0)
+df_het$modes <- ifelse(df_het$modes == "Lab",1,0)
+df_het$uk <- ifelse(df_het$country == "UK",1,0)
+df_het$chile <- ifelse(df_het$country == "Chile",1,0)
+df_het$russia <- ifelse(df_het$country == "Russia",1,0)
+df_het$country <- NULL
+
+Y <- df_het[,1]
+X <- as.matrix(df_het[,-1])
+
+# Run LASSO predictor algorithm, with cross-validated lambda selection
+a0_lasso <- cv.glmnet(y = Y, x= X, alpha=1, family='gaussian')
+
+# Output of model (s set to optimal lambda parameter)
+coef(a0_lasso, s = a0_lasso$lambda.1se)
+
+# Build test dataset
+test <- df_het[,-1]
+test$taxrate <- 10
+
+temp <- df_het[,-1]
+temp$taxrate <- 20
+test <- rbind(test,temp)
+
+temp <- df_het[,-1]
+temp$taxrate <- 30
+test <- rbind(test,temp)
+
+temp <- df_het[,-1]
+temp$taxrate <- 40
+test <- rbind(test,temp)
+
+test <- as.matrix(test)
+rm(temp)
+
+# Predict on full schedule of possible treatment-covariate profiles
+a0_lasso_pred <- predict(a0_lasso, newx = test)
+
+## Set up CATE dataframe for plots
+
+# get covar information
+CATE_estimates <- df_het[,-1] 
+
+# Consolidate dummy variables
+CATE_estimates$country <- ifelse(CATE_estimates$uk == 1,"UK",
+                                 ifelse(CATE_estimates$chile == 1, "Chile",
+                                        ifelse(CATE_estimates$russia == 1, "Russia","USA")))
+
+CATE_estimates$uk <- NULL
+CATE_estimates$chile <- NULL
+CATE_estimates$russia <- NULL
+
+CATE_estimates$gender_lab <- ifelse(CATE_estimates$gender_lab == 1,"Female","Male")
+CATE_estimates$modes <- ifelse(CATE_estimates$modes == 1,"Lab","Online")
+
+# Recover CATE estimates
+n <- length(test[,1])/4
+
+CATE_estimates$y10 <- a0_lasso_pred[1:n]
+CATE_estimates$y20 <- a0_lasso_pred[(n+1):(2*n)]
+CATE_estimates$y30 <- a0_lasso_pred[(2*n+1):(3*n)]
+CATE_estimates$y40 <- a0_lasso_pred[(3*n+1):(4*n)]
+
+CATE_estimates$t1 <- CATE_estimates$y20 - CATE_estimates$y10
+CATE_estimates$t2 <- CATE_estimates$y30 - CATE_estimates$y10
+CATE_estimates$t3 <- CATE_estimates$y40 - CATE_estimates$y10
+
+## LASSO plot - t1
+figure <- het_plot(CATE_estimates,"t1","CATE = Yi,t=20 - Yi,t=10")
+ggsave(figure, filename = "Figures/LASSO_plot_t1.png", device = "png", height = 8, width = 6)
+
 
 #######################
 ### Tables main models
@@ -582,8 +697,8 @@ ggsave(a10_gender_hetplot, filename = "findit_gender_10.png",device = "png",heig
 texreg(list(lm1.cl, lm2.cl, lm3.cl, lm4.cl))
 
 coeffs<-c("Intercept", "Male", "\\# of Additions", 
-                              "Audit Rate", "Tax Rate", "Chile", "Russia", "USA",
-                              "Online Expt","Offer DG", "Risk Aversion")
+          "Audit Rate", "Tax Rate", "Chile", "Russia", "USA",
+          "Online Expt","Offer DG", "Risk Aversion")
 
 
 texreg(file= paste0(bd, "Tables/main_lm_models.tex", sep=""), 
@@ -602,15 +717,15 @@ texreg(list(glm1.cl, glm2.cl, glm3.cl, glm4.cl))
 
 
 texreg(file= paste0(bd, "Tables/main_glm_models.tex", sep=""), 
-  list(glm1.cl, glm2.cl, glm3.cl, glm4.cl),
-  custom.model.names = c("M1", "M2 ", "M3", "M4" ), 
-  custom.coef.names = coeffs, 
-  reorder.coef=c(2, 3, 4,5, 11,10, 9, 6,7, 8, 1),
-  caption = "Logit models on cheating",
-  caption.above = T,
-  label="table:main_glm_models", stars = c(0.001, 0.01, 0.05), #ci.force = T, ci.force.level = 0.95,
-  custom.note= "%stars Individual clustered standard s.e.",
-  booktabs = F, dcolumn = F,  sideways = F)
+       list(glm1.cl, glm2.cl, glm3.cl, glm4.cl),
+       custom.model.names = c("M1", "M2 ", "M3", "M4" ), 
+       custom.coef.names = coeffs, 
+       reorder.coef=c(2, 3, 4,5, 11,10, 9, 6,7, 8, 1),
+       caption = "Logit models on cheating",
+       caption.above = T,
+       label="table:main_glm_models", stars = c(0.001, 0.01, 0.05), #ci.force = T, ci.force.level = 0.95,
+       custom.note= "%stars Individual clustered standard s.e.",
+       booktabs = F, dcolumn = F,  sideways = F)
 
 
 ###############################
@@ -798,7 +913,7 @@ coeffs<-c("Intercept", "Male",  "Audit Rate", "\\# of Additions", #"Weighted Par
           "Online Expt","Offer DG", "Risk Aversion",
           "Male*Audit Rate", "Male*Tax Rate", "Male*Chile", "Male*Russia", "Male*USA",
           "Male*Offer DG", "Male*Risk Aversion"
-          )
+)
 
 
 texreg(file= paste0(bd, "Tables/int_models.tex", sep=""), 
