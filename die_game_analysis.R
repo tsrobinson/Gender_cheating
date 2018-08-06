@@ -1,6 +1,6 @@
 ##########################################
 ## Paper: Cheating across gender
-## Section: Heterogeneous effects models (ability as treatment)
+## Section: Heterogeneous effects models (die game)
 ## Author code: Denise Laroze
 ## Additional code: Thomas Robinson
 ## Year: 2018
@@ -10,6 +10,7 @@ library(FindIt)
 library(BayesTree)
 library(randomForest)
 library(glmnet)
+library(plyr)
 
 source("het_plot_function.r")
 
@@ -19,53 +20,59 @@ source("het_plot_function.r")
 
 # Duplicate df
 set.seed(89)
-df_het <- df
+vars <- c("numberEntered","perform_high","country","modes","offerdg","gender_lab","subj_id")
+df_het <- df[df$die == "Yes",vars]
+
+df_het <- unique(df_het)
+df_het <- df_het[complete.cases(df_het[,vars]),]
 
 df_het$gender_lab <- as.factor(df_het$gender_lab)
 df_het$modes <- as.factor(df_het$modes)
 df_het$perform_high <- ifelse(df_het$perform_high == "High Performance",1,0)
 
 # Audit rate = 0
-# A0 <- FindIt(model.treat = percevaded ~ perform_high,
-#              model.main = ~ gender_lab + country + modes + offerdg + taxrate,
-#              model.int = ~ gender_lab + country + modes,
-#              data = df_het[df_het$auditrate == 0,],
-#              type = "continuous",
-#              treat.type = "single")
+A0 <- FindIt(model.treat = numberEntered ~ perform_high,
+              model.main = ~ gender_lab + country + modes,
+              model.int = ~ gender_lab + country + modes,
+              data = df_het,
+              type = "continuous",
+              treat.type = "single")
 
-A0 <- FindIt(model.treat = percevaded ~ perform_high,
-             model.main = ~ gender_lab + country + modes + offerdg + taxrate,
+A0 <- FindIt(model.treat = numberEntered ~ perform_high,
+             model.main = ~ gender_lab + country + modes,
              model.int = ~ gender_lab + country + modes,
-             data = df_het[df_het$auditrate == 0,],
+             data = df_het,
              type = "continuous",
              treat.type = "single",
              search.lambdas = FALSE,
-             lambdas = c(-10.4,-10.395))
+             lambdas = c(2.475,2.480))
 
 A0_pred <- predict(A0)
 
+View(A0_pred$data)
 
 ## Stacked density plot
-figure <- het_plot(A0_pred$data,"Treatment.effect","FindIt: 0% audit rate")
-ggsave(figure, filename = "Figures/ability_findit_audit_0.png", device = "png", height = 8, width = 6)
+figure <- het_plot(A0_pred$data,"Treatment.effect","FindIt: 0% audit rate", binw = 30)
+ggsave(figure, filename = "Figures/die_findit_audit_0.png", device = "png", height = 8, width = 6)
 
 
 #######################
 ### BART heterogeneity analysis
 #######################
 
-set.seed(89)
-
 # Refresh data
-vars <- c("percevaded", "taxrate", "gender_lab", "country", "modes", "offerdg", "perform_high")
-df_het <- df[df$auditrate == 0,vars]
-df_het$perform_high <- ifelse(df_het$perform_high == "High Performance",1,0)
+set.seed(89)
+vars <- c("numberEntered","perform_high","country","modes","offerdg","gender_lab","subj_id")
+df_het <- df[df$die == "Yes",vars]
+
+df_het <- unique(df_het)
+df_het <- df_het[complete.cases(df_het[,vars]),]
+
+df_het$subj_id <-NULL
 
 # Define variables incl. outcome as column 1
 
-df_het <- df_het[complete.cases(df_het[,vars]),]
-
-y <- df_het$percevaded
+y <- as.double(df_het$numberEntered)
 train <- df_het[,-1]
 
 # Gen. test data: since treat is continuous, develop full schedule of treatment possibilities
@@ -91,24 +98,27 @@ CATE_estimates$t1 <- CATE_estimates$y_high - CATE_estimates$y_low
 
 
 ## BART plot - t1
-figure <- het_plot(CATE_estimates,"t1","BART estimated CATE - Treatment: Ability",reduced=TRUE)
-ggsave(figure, filename = "Figures/ability_BART_plot_t1_reduced.png", device = "png", height = 8, width = 6)
+figure <- het_plot(CATE_estimates,"t1","BART estimated CATE - Treatment: Ability", binw=30)
+ggsave(figure, filename = "Figures/die_BART_plot_t1.png", device = "png", height = 8, width = 6)
 
 #######################
 ### Random Forest
 #######################
 
 set.seed(89)
+vars <- c("numberEntered","perform_high","country","modes","offerdg","gender_lab","subj_id")
+df_het <- df[df$die == "Yes",vars]
 
-vars <- c("percevaded", "taxrate", "gender_lab", "country", "modes", "offerdg", "perform_high")
-df_het <- df[df$auditrate == 0,vars]
+df_het <- unique(df_het)
+df_het <- df_het[complete.cases(df_het[,vars]),]
+
 df_het$gender_lab <- as.factor(df_het$gender_lab)
 df_het$modes <- as.factor(df_het$modes)
 df_het$perform_high <- ifelse(df_het$perform_high == "High Performance",1,0)
 
-# Define variables incl. outcome as column 1
-df_het <- df_het[complete.cases(df_het[,vars]),]
+df_het$subj_id <- NULL
 
+# Define variables incl. outcome as column 1
 test <- df_het[,-1]
 test$perform_high <- 1
 
@@ -118,7 +128,7 @@ test <- rbind(test,temp)
 
 rm(temp)
 
-a0_rf <- randomForest(percevaded ~ ., data=df_het)
+a0_rf <- randomForest(numberEntered ~ ., data=df_het)
 
 a0_rf_pred <- predict(a0_rf, newdata = test)
 
@@ -132,9 +142,8 @@ CATE_estimates$t1 <- CATE_estimates$y_high - CATE_estimates$y_low
 
 
 ## Random Forest plot - t1
-## BART plot - t1
-figure <- het_plot(CATE_estimates,"t1","Random Forest estimated CATE - Treatment: Ability")
-ggsave(figure, filename = "Figures/ability_RF_plot_t1.png", device = "png", height = 8, width = 6)
+figure <- het_plot(CATE_estimates,"t1","Random Forest estimated CATE - Treatment: Ability", binw=30)
+ggsave(figure, filename = "Figures/die_RF_plot_t1.png", device = "png", height = 8, width = 6)
 
 #######################
 ### LASSO

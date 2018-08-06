@@ -369,9 +369,9 @@ lm1<-ols(percevaded~ gender_lab , df, x=T, y=T)
 lm1.cl <- robcov(lm1, df$subj_id)
 
 
-#Likelihood of cheating
-glm1<-lrm(cheat~ gender_lab, df,  x=T, y=T)
-glm1.cl <- robcov(glm1, df$subj_id)
+# Likelihood of cheating
+# glm1<-lrm(percevaded~ gender_lab, df,  x=T, y=T)
+# glm1.cl <- robcov(glm1, df$subj_id)
 
 
 ## Model with treatment level controls
@@ -380,9 +380,9 @@ glm1.cl <- robcov(glm1, df$subj_id)
 lm2<-ols(percevaded~ gender_lab  + ncorrectret, df, x=T, y=T)
 lm2.cl <- robcov(lm2, df$subj_id)
 
-#Likelihood of cheating
-glm2<-lrm(cheat~ gender_lab  + ncorrectret , df, x=T, y=T)
-glm2.cl <- robcov(glm2, df$subj_id)
+# Likelihood of cheating
+# glm2<-lrm(cheat~ gender_lab  + ncorrectret , df, x=T, y=T)
+# glm2.cl <- robcov(glm2, df$subj_id)
 
 ## Model with treatment level controls
 
@@ -391,9 +391,9 @@ lm3<-ols(percevaded~ gender_lab  + ncorrectret + auditrate + taxrate + country +
 lm3.cl <- robcov(lm3, df$subj_id)
 
 
-#Likelihood of cheating
-glm3<-lrm(cheat~ gender_lab  + ncorrectret + auditrate + taxrate +country + modes, df,  x=T, y=T)
-glm3.cl <- robcov(glm3, df$subj_id)
+# Likelihood of cheating
+# glm3<-lrm(cheat~ gender_lab  + ncorrectret + auditrate + taxrate +country + modes, df,  x=T, y=T)
+# glm3.cl <- robcov(glm3, df$subj_id)
 
 ## Model with treatment  and individual level controls
 
@@ -401,9 +401,9 @@ glm3.cl <- robcov(glm3, df$subj_id)
 lm4<-ols(percevaded~ gender_lab  + ncorrectret + auditrate + taxrate + country + modes + offerdg + safechoices , df, x=T, y=T)
 lm4.cl <- robcov(lm4, df$subj_id)
 
-#Likelihood of cheating
-glm4<-lrm(cheat~ gender_lab  + ncorrectret + auditrate + taxrate +country + modes+ offerdg + safechoices, df, x=T, y=T)
-glm4.cl <- robcov(glm4, df$subj_id)
+# Likelihood of cheating
+# glm4<-lrm(cheat~ gender_lab  + ncorrectret + auditrate + taxrate +country + modes+ offerdg + safechoices, df, x=T, y=T)
+# glm4.cl <- robcov(glm4, df$subj_id)
 
 #######################
 ### FindIt analysis
@@ -416,6 +416,7 @@ df_het <- df
 df_het$gender_lab <- as.factor(df_het$gender_lab)
 df_het$modes <- as.factor(df_het$modes)
 df_het$perform_high <- as.factor(df_het$perform_high)
+df_het$country <- as.factor(df_het$country)
 
 # Audit rate = 0
 # A0 <- FindIt(model.treat = percevaded ~ taxrate,
@@ -541,17 +542,36 @@ CATE_estimates$t2 <- CATE_estimates$y30 - CATE_estimates$y10
 CATE_estimates$t3 <- CATE_estimates$y40 - CATE_estimates$y10
 
 ## BART plot - t1
-figure <- het_plot(CATE_estimates,"t1","CATE = Yi,t=20 - Yi,t=10")
-ggsave(figure, filename = "Figures/BART_plot_t1.png", device = "png", height = 8, width = 6)
+figure <- het_plot(CATE_estimates,"t1","CATE = Yi,t=20 - Yi,t=10", reduced = TRUE)
+ggsave(figure, filename = "Figures/BART_plot_t1_reduced.png", device = "png", height = 8, width = 6)
 
 ## BART plot - t2
-figure <- het_plot(CATE_estimates,"t2","CATE = Yi,t=30 - Yi,t=10")
-ggsave(figure, filename = "Figures/BART_plot_t2.png", device = "png", height = 8, width = 6)
+figure <- het_plot(CATE_estimates,"t2","CATE = Yi,t=30 - Yi,t=10", reduced = TRUE)
+ggsave(figure, filename = "Figures/BART_plot_t2_reduced.png", device = "png", height = 8, width = 6)
 
 ## BART plot - t3
-figure <- het_plot(CATE_estimates,"t3","CATE = Yi,t=40 - Yi,t=10")
-ggsave(figure, filename = "Figures/BART_plot_t3.png", device = "png", height = 8, width = 6)
+figure <- het_plot(CATE_estimates,"t3","CATE = Yi,t=40 - Yi,t=10", reduced = TRUE)
+ggsave(figure, filename = "Figures/BART_plot_t3_reduced.png", device = "png", height = 8, width = 6)
 
+## Gender distribution tests
+
+t1_male <- CATE_estimates[CATE_estimates$gender_lab == "Male",]$t1
+t1_female <- CATE_estimates[CATE_estimates$gender_lab == "Female",]$t1
+
+ks.test(t1_male,t1_female)
+wilcox.test(t1_male,t1_female)
+
+t2_male <- CATE_estimates[CATE_estimates$gender_lab == "Male",]$t2
+t2_female <- CATE_estimates[CATE_estimates$gender_lab == "Female",]$t2
+
+ks.test(t2_male,t2_female)
+wilcox.test(t2_male,t2_female)
+
+t3_male <- CATE_estimates[CATE_estimates$gender_lab == "Male",]$t3
+t3_female <- CATE_estimates[CATE_estimates$gender_lab == "Female",]$t3
+
+ks.test(t3_male,t3_female)
+wilcox.test(t3_male,t3_female)
 
 #######################
 ### Random Forest
